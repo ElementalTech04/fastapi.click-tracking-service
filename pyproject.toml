@@ -7,13 +7,14 @@ readme = "README.md"
 packages = [{include = "fastapi"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.10"
 fastapi = "^0.88.0"
 fastapi-common = "^0.3.11.0"
-fastapi-manage = "^0.8.0"
+fastapi-manage = "^0.7.0"
 fastapi-jwt = "^0.1.8"
 fastapi-crud = "^0.0.3"
 fastapi-utils = "^0.2.1"
+aioredis = "^2.0.1"
 
 
 [build-system]
