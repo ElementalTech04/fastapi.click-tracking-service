@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+load_dotenv()
+from os import environ
+
 from fastapi import FastAPI, Request, BackgroundTasks, Depends
 from fastapi.responses import RedirectResponse;
 import aioredis
@@ -21,20 +25,27 @@ class Keys:
         self.prefix = prefix
 
     @prefixed_key
-    def timeseries_ping_key(self) -> str:
+    def timeseries_ping_key(self) -> []:
         """A time series containing 30-second snapshots of url hits."""
-        return f'ping:mean:30s'
+        return f'pingsPerUrl:mean:30s'
+
+    @prefixed_key
+    def timeseries_urlPair_key(self) -> []:
+        """A time series containing 30-second snapshots of url hits."""
+        return f'urlPair:mean:30s'
 
     @prefixed_key
     def cache_key(self) -> str:
         return f'cache'
 
+def make_keys():
+    return Keys()
 
 class Config(BaseSettings):
     # The default URL expects the app to run using Docker and docker-compose.
-    redis_url: str = os.getenv("REDIS_CONN_URL")
+    redis_url: str = environ.get("REDIS_CONN_URL")
 
-
+keys = make_keys()
 log = logging.getLogger(__name__)
 config = Config()
 app = FastAPI(title='FastAPI Redis Tutorial')
@@ -95,8 +106,6 @@ async def add_many_to_timeseries(
     return await partial()
 
 
-def make_keys():
-    return Keys()
 
 
 async def persist(keys: Keys, data: BitcoinSentiments):
@@ -126,12 +135,5 @@ async def set_cache(data, keys: Keys):
         json.dumps(data, default=serialize_dates),
         ex=TWO_MINUTES,
     )
-    
-async def initialize_redis(keys: Keys):
-    await make_timeseries(keys.timeseries_ping_key()())
 
-#On Startup
-@app.on_event('startup')
-async def startup():
-    keys = Keys()
-    await initialize_redis(keys)
+

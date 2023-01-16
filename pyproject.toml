@@ -2,7 +2,7 @@
 name = "fastapi-click-tracking-service"
 version = "0.1.0"
 description = "Small HTTP service that will track when a users clicks a URL"
-authors = ["Your Name <you@example.com>"]
+authors = ["Travis [travistec04@gmail.com]"]
 readme = "README.md"
 packages = [{include = "fastapi"}]
 
