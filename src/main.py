@@ -1,137 +1,63 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Depends
-from fastapi.responses import RedirectResponse;
-import aioredis
-from aioredis.exceptions import ResponseError
-import logging
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from pydantic import BaseSettings
-import functools
+from os import environ
+
+from fastapi import FastAPI, Request, HTTPException, status, Depends
+from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials
+from redis import Redis
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+
+app = FastAPI()
+
+# configure rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(429, _rate_limit_exceeded_handler)
+
+# configure redis connection
+redis = Redis(host=environ.get("REDIS_CONN_HOST"), port=environ.get("REDIS_CONN_PORT"),
+              password=environ.get("REDIS_CONN_PW"))
+
+# API key security
+api_key = APIKeyHeader(name="X-API-Key")
+api_key_value = "mysecretapikey"
+
+# HTTP basic auth security
+security = HTTPBasic()
 
 
-DEFAULT_KEY_PREFIX = 'is-bitcoin-lit'
-TWO_MINUTES = 60 + 60
-HOURLY_BUCKET = '3600000'
-
-class Keys:
-    """Methods to generate key names for Redis data structures."""
-
-    def __init__(self, prefix: str = DEFAULT_KEY_PREFIX):
-        self.prefix = prefix
-
-    @prefixed_key
-    def timeseries_ping_key(self) -> str:
-        """A time series containing 30-second snapshots of url hits."""
-        return f'ping:mean:30s'
-
-    @prefixed_key
-    def cache_key(self) -> str:
-        return f'cache'
+# endpoints
+@app.get("/")
+async def redirect(request: Request, redirection_url: str = ''):
+    if redirection_url == '':
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing redirection_url in request body")
+    destination_url = redis.get(redirection_url)
+    if not destination_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redirection URL not found")
+    return RedirectResponse(url=destination_url)
 
 
-class Config(BaseSettings):
-    # The default URL expects the app to run using Docker and docker-compose.
-    redis_url: str = os.getenv("REDIS_CONN_URL")
+@app.get("/registration")
+async def get_registrations(api_key: str = Depends(api_key)):
+    registrations = {}
+    for redirection_url, destination_url in redis.scan_iter("*"):
+        registrations[redirection_url.decode()] = destination_url.decode()
+    return registrations
 
 
-log = logging.getLogger(__name__)
-config = Config()
-app = FastAPI(title='FastAPI Redis Tutorial')
-redis = aioredis.from_url(config.redis_url, decode_responses=True)
+@app.post("/registration")
+async def create_registration(source_url: str, redirection_url: str,
+                              credentials: HTTPBasicCredentials = Depends(security), api_key: str = Depends(api_key)):
+    if not credentials.username == "admin" and credentials.password == "secret":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+    redis.set(redirection_url, source_url)
+    return {"message": "Registration created successfully"}
 
 
-class RedirectPair(BaseModel):
-    id: int
-    redirectUrl: str
-    shortUrl:str
-
-
-app.get("/")
-async def landingMethod(source: string, request: Request):
-    logRequestDetails(source, request)
-    redirectUrl = await findRedirectUrl(request)
-    return RedirectResponse(url=redirectUrl, status_code=status.HTTP_303_SEE_OTHER)
-
-app.get("/register")
-def getRegisterRecords():
-    return {'hooo', 'heeyyyy'}
-
-app.post("/register")
-def postNewRegisterRecord(record: RedirectPair):
-    return {'hooo', 'heeyyyy'}
-
-
-# Services
-
-def logRequestDetails(source: string, request: Request) -> None:
-    return 
-    
-
-def findRedirectUrl(request: Request, keys: Keys) -> str:
-    
-    return redi
-
-
-async def add_many_to_timeseries(
-    key_pairs: Iterable[Tuple[str, str]],
-    redirectUrl: str
-):
-    """
-    Add many samples to a single timeseries key.
-    `key_pairs` is an iteratble of tuples containing in the 0th position the
-    timestamp key into which to insert entries and the 1th position the name
-    of the key within th `data` dict to find the sample.
-    """
-    partial = functools.partial(redis.execute_command, 'TS.MADD')
-    for datapoint in data:
-        for timeseries_key, sample_key in key_pairs:
-            partial = functools.partial(
-                partial, timeseries_key, int(
-                    float(datapoint['timestamp']) * 1000,
-                ),
-                datapoint[sample_key],
-            )
-    return await partial()
-
-
-def make_keys():
-    return Keys()
-
-
-async def persist(keys: Keys, data: BitcoinSentiments):
-    ts_sentiment_key = keys.timeseries_sentiment_key()
-    ts_price_key = keys.timeseries_price_key()
-    await add_many_to_timeseries(
-        (
-            (ts_price_key, 'btc_price'),
-            (ts_sentiment_key, 'mean'),
-        ), data,
-    )
-    
-async def get_cache(keys: Keys):
-    current_hour_cache_key = keys.cache_key()
-    current_hour_stats = await redis.get(current_hour_cache_key)
-
-    if current_hour_stats:
-        return json.loads(current_hour_stats, object_hook=datetime_parser)
-
-
-async def set_cache(data, keys: Keys):
-    def serialize_dates(v):
-        return v.isoformat() if isinstance(v, datetime) else v
-
-    await redis.set(
-        keys.cache_key(),
-        json.dumps(data, default=serialize_dates),
-        ex=TWO_MINUTES,
-    )
-    
-async def initialize_redis(keys: Keys):
-    await make_timeseries(keys.timeseries_ping_key()())
-
-#On Startup
-@app.on_event('startup')
-async def startup():
-    keys = Keys()
-    await initialize_redis(keys)
+@app.delete("/registration")
+async def delete_registration(redirection_url: str, credentials: HTTPBasicCredentials = Depends(security),
+                              api_key: str = Depends(api_key)):
+    if not credentials.username == "admin" and credentials.password == "secret":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+    if not redis.delete(redirection_url):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redirection URL not found")
+    return {"message": "Registration deleted successfully"}
